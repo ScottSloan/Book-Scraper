@@ -42,7 +42,7 @@ class MainWindow(wx.Frame):
         self.chapter_tree=wx.TreeCtrl(self.main_panel, -1, pos=(10,85), size=(220,400))
         self.chapter_tree.SetFont(self.font)
 
-        self.auto_chapter_chkbox=wx.CheckBox(self.main_panel, -1, "自动添加章节名", pos=(785,12), size=(150,30))
+        self.auto_chapter_chkbox=wx.CheckBox(self.main_panel, -1, "自动添加章节标题", pos=(785,12), size=(150,30))
         self.auto_chapter_chkbox.SetValue(True)
         self.auto_chapter_chkbox.SetFont(self.font)
         self.auto_chapter_chkbox.Enable(False)
@@ -90,9 +90,9 @@ class MainWindow(wx.Frame):
         import platform
         menuid=event.GetId()
         if menuid==950:
-            self.show_msgbox(self,"使用帮助","使用帮助\n\n搜索小说时，如果没有找到你想要的小说，或小说没有更新，请尝试切换搜索来源。\n点击目录列表框，可预览该章节内容\n爬取小说时，可设置保存文件类型以及保存位置，程序默认使用多线程爬取方式，以提高爬取效率。\n如果遇到问题，请前往github提交issue。",wx.ICON_INFORMATION)
+            self.show_msgbox(self,"使用帮助","使用帮助\n\n搜索小说：如果没有搜索到小说，请尝试切换搜索站点\n预览章节：双击树形框章节标题，可预览该章节内容\n爬取小说：可选择文件保存位置，程序默认使用多线程爬取方式，以提高爬取效率。\n如果遇到问题，请前往github提交issue。",wx.ICON_INFORMATION)
         elif menuid==960:
-            self.show_msgbox(self,"关于 小说爬取工具","小说爬取工具 Version 1.30\n\n轻量级的小说爬取工具\nProgrammed by Scott Sloan\n平台：%s\n日期：2021-12-4" % platform.platform(),wx.ICON_INFORMATION)
+            self.show_msgbox(self,"关于 小说爬取工具","小说爬取工具 Version 1.30\n\n轻量级的小说爬取工具\nProgrammed by Scott Sloan\n平台：%s\n日期：2021-12-4\n项目地址：https://github.com/ScottSloan/Book-Scraper" % platform.platform(),wx.ICON_INFORMATION)
         elif menuid==970:
             shelf_window.Show()
     def window_onclose(self, event):
@@ -219,6 +219,7 @@ class SearchWindow(wx.Frame):
         wx.CallAfter(self.select_book,name,url,author,self.type)
     def select_book(self,name,url,author,type):
         self.current_name,self.current_url,self.current_author,self.type=name,url,author,type
+        book_core.change_websites(self.type)
 
         intro=book_core.get_book_info(url)
         chapter_info=book_core.get_book_chapters(url)
