@@ -2,7 +2,7 @@ import wx, os, sqlite3
 from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
 from book_core_V2 import BookCore
-fontsize=10
+fontsize=11
 class MainWindow(wx.Frame):
     def __init__(self, parent):
         style=wx.DEFAULT_FRAME_STYLE & (~wx.MAXIMIZE_BOX)
@@ -25,16 +25,16 @@ class MainWindow(wx.Frame):
         self.book_info_label=wx.StaticText(self.main_panel, -1, "书名",pos=(245,55), size=(400,30))
         self.book_info_label.SetFont(self.font)
 
-        self.search_book_button=wx.Button(self.main_panel, -1, "搜索小说", pos=(480,10), size=(90,30))
+        self.search_book_button=wx.Button(self.main_panel, -1, "搜索小说", pos=(470,10), size=(90,30))
         self.search_book_button.SetFont(self.font)
-        self.get_book_button=wx.Button(self.main_panel, -1, "爬取小说", pos=(580,10), size=(90,30))
+        self.get_book_button=wx.Button(self.main_panel, -1, "爬取小说", pos=(570,10), size=(90,30))
         self.get_book_button.SetFont(self.font)
         self.get_book_button.Enable(False)
-        self.add_shelf_button=wx.Button(self.main_panel, -1, "收藏小说", pos=(680,10), size=(90,30))
+        self.add_shelf_button=wx.Button(self.main_panel, -1, "收藏小说", pos=(670,10), size=(90,30))
         self.add_shelf_button.SetFont(self.font)
         self.add_shelf_button.Enable(False)
 
-        self.book_address_textbox=wx.TextCtrl(self.main_panel, -1, pos=(80,12), size=(380,28))
+        self.book_address_textbox=wx.TextCtrl(self.main_panel, -1, pos=(80, 12), size=(370, 28))
         self.book_address_textbox.SetFont(self.font)
         self.chapter_content_textbox=wx.TextCtrl(self.main_panel, -1, pos=(245,85), size=(650,400), style=wx.TE_READONLY|wx.TE_MULTILINE)
         self.chapter_content_textbox.SetFont(self.font)
@@ -42,7 +42,7 @@ class MainWindow(wx.Frame):
         self.chapter_tree=wx.TreeCtrl(self.main_panel, -1, pos=(10,85), size=(220,400))
         self.chapter_tree.SetFont(self.font)
 
-        self.auto_chapter_chkbox=wx.CheckBox(self.main_panel, -1, "自动添加章节标题", pos=(785,12), size=(150,30))
+        self.auto_chapter_chkbox=wx.CheckBox(self.main_panel, -1, "自动添加章节标题", pos=(775,12), size=(150,30))
         self.auto_chapter_chkbox.SetValue(True)
         self.auto_chapter_chkbox.SetFont(self.font)
         self.auto_chapter_chkbox.Enable(False)
@@ -189,6 +189,7 @@ class SearchWindow(wx.Frame):
         if self.bookname=="":
             main_window.show_msgbox(self,"警告","搜索内容不能为空",style=wx.ICON_WARNING)
             return 0
+        processing_window.Show()
         search_thread=Thread(target=self.search_book_thread)
         search_thread.start()
     def search_book_thread(self):
@@ -208,6 +209,7 @@ class SearchWindow(wx.Frame):
             self.search_result_listctrl.SetItem(index,2,search_result[i][1])
             index += 1
         self.search_result_label.SetLabel("搜索结果 (共 %d 条)" % len(search_result))
+        processing_window.Hide()
     def select_search_result_listctrl(self,event):
         index=self.search_result_listctrl.GetFocusedItem()
 
@@ -220,6 +222,9 @@ class SearchWindow(wx.Frame):
     def select_book(self,name,url,author,type):
         self.current_name,self.current_url,self.current_author,self.type=name,url,author,type
         book_core.change_websites(self.type)
+        main_window.SetTitle(main_window.w_title + " - " + name)
+        main_window.book_address_textbox.SetValue(self.current_url)
+        main_window.book_info_label.SetLabel("书名：%s         作者：%s" % (name,author))
 
         intro=book_core.get_book_info(url)
         chapter_info=book_core.get_book_chapters(url)
@@ -228,9 +233,6 @@ class SearchWindow(wx.Frame):
         self.chapter_urls=list(chapter_info.values())
 
         self.set_chapter_tree(name,self.chapter_titles)
-        main_window.SetTitle(main_window.w_title + " - " + name)
-        main_window.book_address_textbox.SetValue(self.current_url)
-        main_window.book_info_label.SetLabel("书名：%s         作者：%s" % (name,author))
         main_window.book_chapter_label.SetLabel("目录 (共 %d 章)" % len(self.chapter_titles))
         main_window.chapter_content_textbox.SetValue(intro)
 
@@ -238,12 +240,9 @@ class SearchWindow(wx.Frame):
         main_window.add_shelf_button.Enable(True)
     def set_chapter_tree(self,name,chapter_titles):
         main_window.chapter_tree.DeleteAllItems()
-
         root=main_window.chapter_tree.AddRoot(name)
-
         for i in chapter_titles:
             main_window.chapter_tree.AppendItem(root,i)
-        
         main_window.chapter_tree.ExpandAll()
     def source_combobox_EVT(self,event):
         self.type = self.source_combobox.GetSelection()
@@ -348,10 +347,11 @@ class SetBookWindow(wx.Frame):
         file.close()
         wx.CallAfter(self.process_finish)
     def process_finish(self):
-        main_window.show_msgbox(main_window, "提示", '小说 %s 爬取完成' % search_window.current_name,style=wx.ICON_INFORMATION)
+        main_window.show_msgbox(main_window, "提示", '小说 "%s" 爬取完成' % search_window.current_name,style=wx.ICON_INFORMATION)
         main_window.status_bar.SetStatusText(" 就绪",0)
         main_window.status_bar.SetStatusText("", 1)
         main_window.status_bar.SetStatusText("", 2)
+        self.content_dict.clear()
 class ShelfWindow(wx.Frame):
     def __init__(self, parent):
         style=wx.DEFAULT_FRAME_STYLE & (~wx.MAXIMIZE_BOX) & (~wx.MINIMIZE_BOX)
@@ -375,6 +375,7 @@ class ShelfWindow(wx.Frame):
         self.book_shelf_LC.Bind(wx.EVT_LIST_ITEM_SELECTED,self.select_shelf_lc)
         self.select_buttton.Bind(wx.EVT_BUTTON, self.select_book)
         self.remove_buttton.Bind(wx.EVT_BUTTON, self.remove_book)
+        self.remove_all_button.Bind(wx.EVT_BUTTON, self.drop_table)
     def Show_Controls(self):
         self.font=wx.Font()
         self.font.PointSize=fontsize
@@ -386,6 +387,8 @@ class ShelfWindow(wx.Frame):
         self.remove_buttton = wx.Button(self.shelf_panel, -1, "删除选中小说", pos=(590, 320), size=(120, 30))
         self.remove_buttton.SetFont(self.font)
         self.remove_buttton.Enable(False)
+        self.remove_all_button=wx.Button(self.shelf_panel,-1,"删除全部小说",pos=(10,320),size=(120,30))
+        self.remove_all_button.SetFont(self.font)
 
         self.book_shelf_LC=wx.ListCtrl(self.shelf_panel,-1,pos=((10,10)),size=((700, 300)),style=wx.LC_REPORT)
         self.book_shelf_LC.SetFont(self.font)
@@ -394,6 +397,18 @@ class ShelfWindow(wx.Frame):
         self.cursor = self.db.cursor()
         self.cursor.execute("SELECT * FROM book_shelf")
         self.result = self.cursor.fetchall()
+    def init_listctrl(self):
+        self.book_shelf_LC.ClearAll()
+        self.book_shelf_LC.InsertColumn(0,"序号",width=50)
+        self.book_shelf_LC.InsertColumn(1,"书名",width=150)
+        self.book_shelf_LC.InsertColumn(2,"作者",width=100)
+        self.book_shelf_LC.InsertColumn(3,"来源",width=200)
+        self.book_shelf_LC.InsertColumn(4,"地址",width=200)
+    def drop_table(self, event):
+        self.cursor.execute('''DROP TABLE "book_shelf"''')
+        self.cursor.execute('''CREATE TABLE "book_shelf" ("id"	INTEGER,"name"	TEXT,"url"	TEXT,"author"	TEXT,"type"	INTEGER,PRIMARY KEY("id" AUTOINCREMENT))''')
+        self.db.commit()
+        self.init_listctrl()
     def add_book(self, info):
         self.connect_db()
         if not self.check_same(info[0], info[3]):
@@ -409,13 +424,7 @@ class ShelfWindow(wx.Frame):
         else:
             return True
     def show_books(self):
-        self.book_shelf_LC.ClearAll()
-        self.book_shelf_LC.InsertColumn(0,"序号",width=50)
-        self.book_shelf_LC.InsertColumn(1,"书名",width=150)
-        self.book_shelf_LC.InsertColumn(2,"作者",width=100)
-        self.book_shelf_LC.InsertColumn(3,"来源",width=200)
-        self.book_shelf_LC.InsertColumn(4,"地址",width=200)
-
+        self.init_listctrl()
         for index,value in enumerate(self.result):
             self.book_shelf_LC.InsertItem(index,str(value[0]))
             self.book_shelf_LC.SetItem(index,1,value[1])
@@ -438,6 +447,23 @@ class ShelfWindow(wx.Frame):
         self.book_shelf_LC.DeleteItem(self.index)
         self.cursor.execute("DELETE FROM book WHERE book_name = '%s' AND source = '%s'" % (self.name,self.type))
         self.db.commit()
+class ReadWindow(wx.Frame):
+    pass
+class SetWindow(wx.Frame):
+    pass
+class ProcessingWindow(wx.Frame):
+    def __init__(self, parent):
+        style=wx.DEFAULT_FRAME_STYLE & (~wx.MAXIMIZE_BOX) & (~wx.MINIMIZE_BOX) & (~wx.CLOSE_BOX)
+        wx.Frame.__init__(self, parent, -1, "处理中", size=(200,80), style=style)
+        self.processing_panel=wx.Panel(self, -1)
+        self.Center()
+
+        self.font=wx.Font()
+        self.font.PointSize=fontsize
+        self.font.FaceName="微软雅黑"
+
+        self.processing_label=wx.StaticText(self.processing_panel,-1,"正在处理中，请稍候",pos=(10,10),size=(120,30))
+        self.processing_label.SetFont(self.font)
 if __name__=="__main__":
     app=wx.App()
     book_core=BookCore()
@@ -445,5 +471,6 @@ if __name__=="__main__":
     search_window=SearchWindow(main_window)
     setbook_window=SetBookWindow(main_window)
     shelf_window=ShelfWindow(main_window)
+    processing_window=ProcessingWindow(None)
     main_window.Show()
     app.MainLoop()

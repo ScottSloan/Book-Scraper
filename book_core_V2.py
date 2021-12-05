@@ -41,9 +41,17 @@ class BookCore:
 
         info=selector.css(self.result[8]).extract()
         intro=selector.css(self.result[9]).extract()
-        info_processed="\n".join(info + intro)
 
-        return info_processed
+        return self.process_info(info + intro)
+    def process_info(self, info):
+        processed = info
+        for i in info:
+            if str(i).endswith("："):
+                index = info.index(i)
+                processed[index] = i + info [index + 1]
+                del processed[index + 1]
+                break
+        return "\n".join(processed)
     def process_chapter_titles(self, chapter_titles):
         remove_str='<<---展开全部章节--->>'
         temp=list(chapter_titles)
@@ -66,7 +74,7 @@ class BookCore:
 
         return dict(zip(result_names,list(zip(result_urls,result_authors))))
     def process_authors(self, result_authors):
-        if not result_authors[0].startswith("作者"):
+        if  len(result_authors)==0 or not result_authors[0].startswith("作者"):
             return result_authors
         return [i[3:] for i in result_authors]
     def change_websites(self, type):
