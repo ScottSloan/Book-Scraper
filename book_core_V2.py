@@ -1,7 +1,10 @@
 import parsel, sqlite3, cloudscraper
+import configparser
 from urllib.parse import quote
+from concurrent.futures import ThreadPoolExecutor
 class BookCore:
     def __init__(self):
+        self.read_config()
         self.scraper = cloudscraper.create_scraper(browser = {"browser":"chrome", "desktop":False, "platform":"android"}, delay = 5)
         self.change_websites(0)
         self.get_websites_list()
@@ -9,9 +12,11 @@ class BookCore:
     def get_html_page(self, url, encoding):
         while True:
             try:
-                req = self.scraper.get(url = url, proxies = self.random_ip(), timeout=3)
+                proxy = self.random_ip()
+                req = self.scraper.get(url = url, proxies = proxy, timeout=2)
                 break
             except:
+                print("error",proxy)
                 continue
         req.encoding=encoding
         return req.text
@@ -33,6 +38,7 @@ class BookCore:
 
         title = selector.css(self.result[12]).extract_first()
         contents = selector.css(self.result[13]).extract()
+        contents = [i for i in contents if i != "\r\n\t\t"]
 
         return [title,"\n".join(contents)]
     def get_book_info(self, url):
@@ -93,15 +99,87 @@ class BookCore:
         for index,value in enumerate(result):
             self.website_list.append("%d.%s (%s)" % (index + 1,value[0],value[1]))
     def get_proxy_ip(self):
-        html=self.scraper.get("http://www.ip3366.net/")
+        if self.ip_type == 0:
+            return
+        self.ip = []
+        self.port = []
+        thread = ThreadPoolExecutor(max_workers = 10)
+        task = [thread.submit(self.get_each_page_ip, i) for i in range(1, int(self.ip_amounts / 10))]
+    def get_each_page_ip(self, page):
+        html=self.scraper.get("http://www.ip3366.net/?stype=1&page=%d" % page)
         html.encoding="gbk"
 
         selector=parsel.Selector(html.text)
 
-        self.ip=selector.css("#list > table > tbody > tr > td:nth-child(1) ::text").extract()
-        self.port=selector.css("#list > table > tbody > tr > td:nth-child(2) ::text").extract()
-        self.type=selector.css("#list > table > tbody > tr > td:nth-child(4) ::text").extract()
+        current_ip=selector.css("#list > table > tbody > tr > td:nth-child(1) ::text").extract()
+        current_port=selector.css("#list > table > tbody > tr > td:nth-child(2) ::text").extract()
+
+        self.ip.extend(current_ip)
+        self.port.extend(current_port)
     def random_ip(self):
+        if self.ip_type == 0:
+            return {}
+        elif self.ip_type == 2:
+            return {"http":self.ip_addres}
         import random
-        index = random.randint(0, 9)
-        return {self.type[index].lower():self.ip[index] + ":" +self.port[index]}
+        index = random.randint(0, len(self.ip) - 1)
+        return {"http":self.ip[index] + ":" + self.port[index]}
+    def read_config(self):
+        self.config = configparser.ConfigParser()
+        self.config.read("config.conf")
+
+        self.ip_type = int(self.config.get("proxy_ip","ip_type"))
+        self.ip_amounts = int(self.config.get("proxy_ip","ip_amounts"))
+        self.ip_addres = self.config.get("proxy_ip","ip_address")
+        self.thread_amounts = int(self.config.get("thread_pool","thread_amounts"))
+    def save_config(self, ip_type, ip_amounts, ip_address, thread_amounts):
+        self.config.set("proxy_ip", "ip_type", str(ip_type))
+        self.config.set("proxy_ip", "ip_amounts", str(ip_amounts))
+        self.config.set("proxy_ip", "ip_address", ip_address)
+        self.config.set("thread_pool", "thread_amounts", str(thread_amounts))
+        with open("config.conf", "w", encoding = "utf-8") as f:
+            self.config.write(f)
+        self.__init__()
+class HtmlCore:
+    def save_css(self, path):
+        css = '.page {background-color: #E9FAFF; font-family: 微软雅黑; }\n.list {overflow: hidden; margin: 0 auto 10px;}\n.list dt {font-size: 18px; line-height: 36px; text-align: center; background: #C3DFEA; overflow: hidden;}\n.list dd {zoom: 1; padding: 0 10px; border-bottom: 1px dashed #CCC; float: left; width: 250px;}\n.list dd a {font-size: 16px; line-height: 36px; white-space: nowrap; color: #2a779d;}\n.list dd a:link {text-decoration: none;}\n.content h1 {font-size: 24px ; font-weight: 400; text-align: center ; color: #CC3300 ; line-height: 40px ;margin: 20px; border-bottom: 1px dashed #CCC;}\n.content p {font-size: 20px ;border-bottom: 1px dashed #CCC; margin: 20px;}\n.pagedown {padding: 0; background: #d4eaf2; height: 40px ; line-height: 40px ; margin-bottom: 10px ;text-align: center;}\n.pagedown a {font-size: 16px; padding: 10px ; line-height: 30px;}\n.pagedown a:link {text-decoration: none;}\n.pagedown .p_contents {color: #2a779d; background-size: 90px;}\n.pagedown .p_up {color: #2a779d; background-size: 90px;}\n.pagedown .p_down {color: #2a779d; background-size: 90px;}'
+        with open(path, "w", encoding = "utf-8") as file:
+            file.write(css)
+    def process_contents(self, chapter_name, text, index, isFirst, isLast):
+        html_page = []
+        html_title = '\n<title>' + chapter_name + '</title>'
+        html_head = '<html>\n<head>\n<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />' + html_title + '\n<link rel="stylesheet" href="style.css">\n</head>\n<body class="page">\n<div class="content">'
+        html_page.append(html_head)
+
+        content_lines = str(text[1]).replace("\n","\n<br /><br />\n")
+        html_body = '<h1>' + chapter_name + '</h1>\n'+'<p>' + content_lines + '</p>\n'
+        html_page.append(html_body)
+
+        if isFirst :
+            previous_c = ""
+            next_c = '<a href="' + str(index + 1) +'.html" class="p_down">下一章</a>\n'
+        elif isLast:
+            previous_c = '<a href="' + str(index - 1)+'.html" class="p_up">上一章</a>\n'
+            next_c = ""
+        else:
+            previous_c = '<a href="' + str(index - 1)+'.html" class="p_up">上一章</a>\n'
+            next_c = '<a href="' + str(index + 1) +'.html" class="p_down">下一章</a>\n'
+
+        html_bottom = '</div>\n<div class="pagedown">\n<a href="contents.html" class="p_contents" >目录</a>\n' + previous_c + next_c + '</div>\n</body>\n</html>'
+
+        html_page.append(html_bottom)
+        return "".join(html_page)
+    def process_chapter(self, bookname, chaptername_list):
+        html_page = []
+        html_title = '\n<title>' + bookname + ' 章节列表</title>'
+        html_head = '<html>\n<head>\n<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />' + html_title + '\n<link rel="stylesheet" href="style.css">\n</head>\n<body class="page">\n<div class="list">\n'
+        html_page.append(html_head)
+
+        html_dt='<dt>'+bookname+' 章节列表</dt>\n'
+        html_page.append(html_dt)
+
+        for index,value in enumerate(chaptername_list):
+            html_page.append('<dd><a href="' + str(index) + '.html">' + value + '</a></dd>')
+
+        html_page.append('</div>\n</body>')
+        return "".join(html_page)
