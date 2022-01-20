@@ -1,49 +1,43 @@
-import parsel
-import configparser
-import os
-import sqlite3
-import requests
-import zipfile
+from parsel import Selector
+from configparser import ConfigParser
+from sqlite3 import connect
+from requests import get, RequestException
 from urllib.parse import quote
 class BookCore:
     def __init__(self):
-        self.setdpi()
+        self.set_dpi()
         self.read_config()
         self.change_websites(0)
         self.get_websites_list()
     def get_html_page(self, url, encoding):
-        failed_count = 0
-        self.isFailed = False
-        while True:
+        for i in range(0, 3):
             try:
                 header = {"User-Agent":"Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36 Edg/96.0.1054.62"}
-                req = requests.get(url = url, headers = header,proxies = self.random_ip(), timeout = 5)
+                req = get(url = url, headers = header,proxies = self.get_ip(), timeout = 5)
                 break
-            except requests.RequestException as e:
-                failed_count += 1
-                print(e)
-                if failed_count == 5:
-                    self.isFailed = True
+            except RequestException as e:
+                if i == 3:
                     self.error_info = e
-                    return 0
+                    print(e)
+                    return "Error"
                 continue
         req.encoding = encoding
         return req.text
     def get_book_chapters(self, url):
-        html=self.get_html_page(url, self.get_encoding(1))
-        selector=parsel.Selector(html)
+        html = self.get_html_page(url, self.get_encoding(1))
+        selector = Selector(html)
 
-        chapter_titles=selector.css(self.result[10]).extract()
-        chapter_urls=selector.css(self.result[11]).extract()
+        chapter_titles = selector.css(self.result[10]).extract()
+        chapter_urls = selector.css(self.result[11]).extract()
         
-        chapter_titles=self.process_chapter_titles(chapter_titles)
+        chapter_titles = self.process_chapter_titles(chapter_titles)
         chapter_urls = self.process_chapter_urls(chapter_urls)
 
-        chapter_info=dict(zip(chapter_titles,chapter_urls))
+        chapter_info = dict(zip(chapter_titles, chapter_urls))
         return chapter_info
     def get_book_contents(self, url):
         html = self.get_html_page(url, self.get_encoding(2))
-        selector = parsel.Selector(html)
+        selector = Selector(html)
 
         title = selector.css(self.result[12]).extract_first()
         contents = selector.css(self.result[13]).extract()
@@ -51,8 +45,8 @@ class BookCore:
 
         return [title,"\n".join(contents)]
     def get_book_info(self, url):
-        html=self.get_html_page(url, self.get_encoding(1))
-        selector=parsel.Selector(html)
+        html = self.get_html_page(url, self.get_encoding(1))
+        selector = Selector(html)
 
         info=selector.css(self.result[8]).extract()
         intro=selector.css(self.result[9]).extract()
@@ -81,9 +75,7 @@ class BookCore:
         search_url = self.result[4] + quote (bookname, encoding=encoding)
 
         html = self.get_html_page(search_url, encoding)
-        if self.isFailed:
-            return 0
-        selector = parsel.Selector(html)
+        selector = Selector(html)
 
         result_names = selector.css(self.result[5]).extract()
         result_urls = selector.css(self.result[6]).extract()
@@ -94,18 +86,18 @@ class BookCore:
 
         return dict(zip(result_names,list(zip(result_urls,result_authors))))
     def process_urls(self, result_urls):
-        if str(result_urls[0]).startswith("https") or str(result_urls[0]).startswith("http"):
+        if not bool(len(result_urls)) or str(result_urls[0]).startswith("https") or str(result_urls[0]).startswith("http"):
             return result_urls
         else:
             return ["https://" + self.result[2] + i for i in result_urls]
     def process_authors(self, result_authors):
-        if len(result_authors)==0 or not result_authors[0].startswith("作者"):
+        if not bool(len(result_authors)) or not str(result_authors[0]).startswith("作者"):
             return result_authors
         return [i[3:] for i in result_authors]
     def change_websites(self, type):
         self.result = self.sql_query("*", type)
     def sql_query(self, args, type):
-        self.db = sqlite3.connect("book.db", check_same_thread = False)
+        self.db = connect("book.db", check_same_thread = False)
         self.cursor = self.db.cursor()
         self.cursor.execute('''SELECT %s FROM book_websites WHERE id=%d''' % (args, type))
         return self.cursor.fetchone()
@@ -116,35 +108,43 @@ class BookCore:
         result = self.cursor.fetchall()
         self.website_list = []
         for index,value in enumerate(result):
-            self.website_list.append("%d.%s (%s)" % (index + 1,value[0],value[1]))
-    def random_ip(self):
-        if self.ip_type == 0:
+            self.website_list.append("%d.%s (%s)" % (index + 1, value[0], value[1]))
+    def get_ip(self):
+        if not self.proxy_ip:
             return {}
-        elif self.ip_type == 1:
+        else:
             return {"https":self.ip_addres}
     def read_config(self):
-        self.config = configparser.ConfigParser()
-        self.config.read("config.conf")
-        self.ip_type = int(self.config.get("proxy_ip","ip_type"))
+        self.config = ConfigParser()
+        self.config.read("config.conf", encoding = "utf-8")
+
+        self.proxy_ip = bool(int(self.config.get("proxy_ip","proxy_ip")))
         self.ip_addres = self.config.get("proxy_ip","ip_address")
         self.thread_amounts = int(self.config.get("thread_pool","thread_amounts"))
     def save_config(self, ip_type, ip_address, thread_amounts):
-        self.config.set("proxy_ip", "ip_type", str(ip_type))
+        self.config.set("proxy_ip", "proxy_ip", str(ip_type))
         self.config.set("proxy_ip", "ip_address", ip_address)
         self.config.set("thread_pool", "thread_amounts", str(thread_amounts))
         with open("config.conf", "w", encoding = "utf-8") as f:
             self.config.write(f)
         self.read_config()
-    def setdpi(self):
-        import ctypes, platform
-        if platform.platform().startswith("Windows-10"):
-            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    def set_dpi(self):
+        from platform import platform
+        if platform().startswith("Windows-10"):
+            from ctypes import windll
+            windll.shcore.SetProcessDpiAwareness(2)
+    def read_history(self):
+        return self.config.options("history")
+    def save_history(self, item):
+        self.config.set("history", "%s" % item, "")
+        with open("config.conf", "w", encoding = "utf-8") as f:
+            self.config.write(f)
 class HtmlCore:
     def save_css(self, path):
         css = '.page {background-color: #E9FAFF; font-family: 微软雅黑; }\n.list {overflow: hidden; margin: 0 auto 10px;}\n.list dt {font-size: 18px; line-height: 36px; text-align: center; background: #C3DFEA; overflow: hidden;}\n.list dd {zoom: 1; padding: 0 10px; border-bottom: 1px dashed #CCC; float: left; width: 250px;}\n.list dd a {font-size: 16px; line-height: 36px; white-space: nowrap; color: #2a779d;}\n.list dd a:link {text-decoration: none;}\n.content h1 {font-size: 24px ; font-weight: 400; text-align: center ; color: #CC3300 ; line-height: 40px ;margin: 20px; border-bottom: 1px dashed #CCC;}\n.content p {font-size: 20px ;border-bottom: 1px dashed #CCC; margin: 20px;}\n.pagedown {padding: 0; background: #d4eaf2; height: 40px ; line-height: 40px ; margin-bottom: 10px ;text-align: center;}\n.pagedown a {font-size: 16px; padding: 10px ; line-height: 30px;}\n.pagedown a:link {text-decoration: none;}\n.pagedown .p_contents {color: #2a779d; background-size: 90px;}\n.pagedown .p_up {color: #2a779d; background-size: 90px;}\n.pagedown .p_down {color: #2a779d; background-size: 90px;}'
         with open(path, "w", encoding = "utf-8") as file:
             file.write(css)
-    def process_contents(self, chapter_name, text, index, isFirst, isLast):
+    def process_contents(self, path, chapter_name, text, index, isFirst, isLast):
         html_page = []
         html_title = '\n<title>' + chapter_name + '</title>'
         html_head = '<html>\n<head>\n<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />' + html_title + '\n<link rel="stylesheet" href="style.css">\n</head>\n<body class="page">\n<div class="content">'
@@ -154,8 +154,8 @@ class HtmlCore:
         html_body = '<h1>' + chapter_name + '</h1>\n'+'<p id="text">' + content_lines + '</p>\n'
         html_page.append(html_body)
 
-        previous_c = '<a href="' + str(index - 1)+'.html" id="p_u" class="p_up">上一章</a>\n'
-        next_c = '<a href="' + str(index + 1) +'.html" id="p_d" class="p_down">下一章</a>\n'
+        previous_c = '<a href="' + str(index)+'.html" id="p_u" class="p_up">上一章</a>\n'
+        next_c = '<a href="' + str(index + 2) +'.html" id="p_d" class="p_down">下一章</a>\n'
         if isFirst :
             previous_c = ""
         elif isLast:
@@ -164,8 +164,9 @@ class HtmlCore:
         html_bottom = '</div>\n<div class="pagedown">\n<a href="contents.html" id="p_con" class="p_contents" >目录</a>\n' + previous_c + next_c + '</div>\n</body>\n</html>'
 
         html_page.append(html_bottom)
-        return "".join(html_page)
-    def process_chapter(self, bookname, chaptername_list):
+
+        self.save_to_file(path, "".join(html_page))
+    def process_chapter(self, path, bookname, chaptername_list):
         html_page = []
         html_title = '\n<title>' + bookname + ' 章节列表</title>'
         html_head = '<html>\n<head>\n<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />' + html_title + '\n<link rel="stylesheet" href="style.css">\n</head>\n<body class="page">\n<div class="list">\n'
@@ -175,13 +176,18 @@ class HtmlCore:
         html_page.append(html_dt)
 
         for index,value in enumerate(chaptername_list):
-            html_page.append('<dd><a href="' + str(index) + '.html">' + value + '</a></dd>')
+            html_page.append('<dd><a href="' + str(index + 1) + '.html">' + value + '</a></dd>\n')
 
         html_page.append('</div>\n</body>')
-        return "".join(html_page)
+
+        self.save_to_file(path, "".join(html_page))
+    def save_to_file(self, path, text):
+        with open(path, "a", encoding = "utf-8") as f:
+            f.write(text)
 class EpubCore:
     def create_epub(self, path, name, author, chapters):
-        self.zfile = zipfile.ZipFile(path, "a")
+        from zipfile import ZipFile
+        self.zfile = ZipFile(path, "a")
 
         self.save_mimetype()
         self.save_container()

@@ -1,29 +1,20 @@
-import wx
-import wx.html2
-import requests
-import sys
-import os
-import sqlite3
+import wx, wx.html2, requests, os, shutil
+from sqlite3 import connect
 from concurrent.futures import ThreadPoolExecutor
-from book_core_V2 import *
-fontsize = 10
+from book_core_V2 import BookCore, HtmlCore, EpubCore
 class MainWindow(wx.Frame):
     def __init__(self, parent):
         self.w_title="小说爬取工具"
         wx.Frame.__init__(self, parent, -1, title = self.w_title)
+
         self.SetSize(self.FromDIP((925, 585)))
         self.main_panel = wx.Panel(self, -1)
         self.scale_factor = self.GetDPIScaleFactor()
 
         self.Center()
-        self.Show_Controls()
+        self.init_controls()
         self.Bind_EVT()
-    def Show_Controls(self):
-        self.font = wx.Font()
-        self.font.PointSize = fontsize
-        self.font.FaceName = "微软雅黑"
-        self.main_panel.SetFont(self.font)
-
+    def init_controls(self):
         self.book_address_label = wx.StaticText(self.main_panel, -1, "小说地址")
         self.book_address_textbox = wx.TextCtrl(self.main_panel, -1)
 
@@ -67,13 +58,9 @@ class MainWindow(wx.Frame):
 
         self.main_panel.SetSizer(vbox)
 
-        self.status_bar = wx.StatusBar(self, -1)
-        self.status_bar.SetFieldsCount(3)
-        self.status_bar.SetStatusWidths((200 * self.scale_factor, 500 * self.scale_factor, 250 * self.scale_factor))
-        self.status_bar.SetStatusText(" 就绪",0)
-
-        self.SetStatusBar(self.status_bar)
-
+        self.init_menu_bar()
+        self.init_status_bar()
+    def init_menu_bar(self):
         self.menu_bar = wx.MenuBar()
         self.about_menu = wx.Menu()
         self.tool_menu = wx.Menu()
@@ -85,9 +72,8 @@ class MainWindow(wx.Frame):
 
         self.bookshelf_menuitem = wx.MenuItem(self.tool_menu, 970, "书架(&B)", " 显示收藏的小说")
         self.read_mode_menuitem = wx.MenuItem(self.tool_menu, 985, "阅读模式(&R)", " 进入阅读模式")
+        self.strfilter_menuitem = wx.MenuItem(self.tool_menu, 994, "字符串过滤(&F)", " 编辑要过滤字符串")
         self.setting_menuitem = wx.MenuItem(self.tool_menu, 980, "首选项(&S)", " 编辑首选项")
-
-        self.read_mode_menuitem.Enable(False)
 
         self.menu_bar.Append(self.tool_menu,"工具(&T)")
         self.menu_bar.Append(self.about_menu,"帮助(&H)")
@@ -99,16 +85,23 @@ class MainWindow(wx.Frame):
         self.about_menu.Append(self.about_menuitem)
         self.tool_menu.Append(self.read_mode_menuitem)
         self.tool_menu.Append(self.bookshelf_menuitem)
+        self.tool_menu.Append(self.strfilter_menuitem)
         self.tool_menu.AppendSeparator()
         self.tool_menu.Append(self.setting_menuitem)
-        self.menu_bar.SetFont(self.font)
 
         self.SetMenuBar(self.menu_bar)
+    def init_status_bar(self):
+        self.status_bar = wx.StatusBar(self, -1)
+        self.status_bar.SetFieldsCount(3)
+        self.status_bar.SetStatusWidths((200 * self.scale_factor, 500 * self.scale_factor, 250 * self.scale_factor))
+        self.status_bar.SetStatusText(" 就绪",0)
+
+        self.SetStatusBar(self.status_bar)
     def Bind_EVT(self):
-        self.Bind(wx.EVT_CLOSE, self.window_onclose)
+        self.Bind(wx.EVT_CLOSE, self.OnClose)
 
         self.search_book_button.Bind(wx.EVT_BUTTON,self.Load_search_window)
-        self.get_book_button.Bind(wx.EVT_BUTTON,self.Load_setbook_window)
+        self.get_book_button.Bind(wx.EVT_BUTTON,self.Load_parse_window)
         self.add_shelf_button.Bind(wx.EVT_BUTTON,self.Add_to_shelf)
 
         self.chapter_tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED,self.select_chapter_tree)
@@ -120,29 +113,31 @@ class MainWindow(wx.Frame):
         self.book_info_label.Bind(wx.EVT_RIGHT_DOWN, self.info_popup_menu)
         self.chapter_tree.Bind(wx.EVT_TREE_ITEM_RIGHT_CLICK, self.tree_popup_menu)
     def menu_EVT(self, event):
-        import platform
+        from platform import platform
         menuid = event.GetId()
         if menuid == 950:
             self.show_msgbox(self, "使用帮助", "使用帮助\n\n搜索小说：如果没有搜索到小说，请尝试切换搜索站点\n预览章节：双击树形框章节标题，可预览该章节内容\n爬取小说：可选择文件保存位置，程序默认使用多线程爬取方式，以提高爬取效率。\n如果遇到问题，请前往github提交issue。",wx.ICON_INFORMATION)
         elif menuid == 960:
-            self.show_msgbox(self, "关于 小说爬取工具", "小说爬取工具 Version 1.32\n\n轻量级的小说爬取工具\nProgrammed by Scott Sloan\n平台：%s\n日期：2022-1-14" % platform.platform(),wx.ICON_INFORMATION)
+            self.show_msgbox(self, "关于 小说爬取工具", "小说爬取工具 Version 1.33\n\n轻量级的小说爬取工具\nProgrammed by Scott Sloan\n平台：%s\n日期：2022-1-20" % platform(),wx.ICON_INFORMATION)
         elif menuid == 970:
             shelf_window.ShowWindowModal()
         elif menuid == 985:
-            if setbook_window.isworking:
-                self.show_msgbox(self,"警告","请等待爬取进程结束",style=wx.ICON_WARNING)
+            if parse_window.isworking:
+                self.show_msgbox(self, "警告", "请等待爬取进程结束", style = wx.ICON_WARNING)
                 return
             read_window = ReadWindow(self)
             read_window.Show()
+            read_window.load_select_window()
+
         elif menuid == 980:
-            if setbook_window.isworking:
-                self.show_msgbox(self,"警告","请等待爬取进程结束",style=wx.ICON_WARNING)
+            if parse_window.isworking:
+                self.show_msgbox(self, "警告", "请等待爬取进程结束", style = wx.ICON_WARNING)
                 return
             set_window = SetWindow(self)
             set_window.ShowWindowModal()
         elif menuid == 990:
-            import webbrowser
-            webbrowser.open("https://github.com/ScottSloan/Book-Scraper")
+            from webbrowser import open
+            open("https://github.com/ScottSloan/Book-Scraper")
         elif menuid == 810:
             pass
     def info_popup_menu(self, event):
@@ -157,10 +152,12 @@ class MainWindow(wx.Frame):
         tree_menu = wx.Menu()
 
         preview_menuitem = wx.MenuItem(tree_menu, 300, "预览章节内容(&V)")
-        edit_menuitem = wx.MenuItem(tree_menu, 310, "编辑\\导出章节信息(&E)")
+        edit_menuitem = wx.MenuItem(tree_menu, 310, "删除章节(&D)")
+        rename_menuitem = wx.MenuItem(tree_menu, 320, "重命名章节(&R)")
         tree_menu.Append(preview_menuitem)
         tree_menu.AppendSeparator()
         tree_menu.Append(edit_menuitem)
+        tree_menu.Append(rename_menuitem)
 
         self.tree_menu_event = event
         self.Bind(wx.EVT_MENU, self.popup_menu_EVT)
@@ -168,41 +165,41 @@ class MainWindow(wx.Frame):
     def popup_menu_EVT(self, event):
         menuid = event.GetId()
         if menuid == 200:
-            cb = wx.Clipboard()
-            data = wx.TextDataObject()
-            data.SetText((self.book_info_label.GetLabel()))
-            cb.Open()
-            cb.SetData(data)
-            cb.Flush()
-        if menuid == 300:
+            self.copy_to_cb()
+        elif menuid == 300:
             self.select_chapter_tree(self.tree_menu_event)
-    def window_onclose(self, event):
-        if setbook_window.isworking:
+        elif menuid == 310:
+            self.remove_chapter_tree(self.tree_menu_event)
+        elif menuid == 320:
+            self.rename_chapter_tree(self.tree_menu_event)
+    def OnClose(self, event):
+        from sys import exit
+        if parse_window.isworking:
             id = self.show_msgbox(self, "警告：", "爬取进程仍在进行，是否确认退出？", style = wx.ICON_WARNING | wx.YES_NO)
             if id == wx.ID_YES:
-                for i in setbook_window.task:
+                for i in parse_window.task:
                     i.cancel()
-                sys.exit(0)
+                exit(0)
             else:
                 return
         else:
-            sys.exit(0)
+            exit(0)
     def show_msgbox(self, parent, caption, message, style):
         dlg=wx.MessageDialog(parent, message, caption, style=style)
         evt=dlg.ShowModal()
         dlg.Destroy()
         return evt
     def Load_search_window(self, event):
-        if setbook_window.isworking:
+        if parse_window.isworking:
             self.show_msgbox(self,"警告","请等待爬取进程结束",style=wx.ICON_WARNING)
             return
         search_window.ShowWindowModal()
-    def Load_setbook_window(self, event):
-        if setbook_window.isworking:
+    def Load_parse_window(self, event):
+        if parse_window.isworking:
             self.show_msgbox(self,"警告","请等待爬取进程结束",style=wx.ICON_WARNING)
             return
-        setbook_window.ShowWindowModal()
-        setbook_window.file_name_textbox.SetValue(search_window.current_name)
+        parse_window.ShowWindowModal()
+        parse_window.file_name_textbox.SetValue(search_window.current_name)
     def Add_to_shelf(self, event):
         info=(search_window.current_name, search_window.current_url, search_window.current_author, search_window.type)
         if shelf_window.add_book(info):
@@ -222,8 +219,30 @@ class MainWindow(wx.Frame):
         index2 = search_window.chapter_titles.index(self.current_chapter_title)
         self.current_chapter_url = search_window.chapter_urls[index2]
 
-        wx.CallAfter(processing_window.Show)
         wx.CallLater(1, self.select_chapter)
+
+        self.processing_window = ProcessingWindow(self)
+        self.processing_window.ShowWindowModal()
+    def remove_chapter_tree(self, event):
+        item = event.GetItem()
+        chapter_name = self.chapter_tree.GetItemText(item)
+
+        index = search_window.chapter_titles.index(chapter_name)
+        del search_window.chapter_titles[index]
+        del search_window.chapter_urls[index]
+
+        self.chapter_tree.Delete(item)
+
+        self.book_chapter_label.SetLabel("目录 (共 %d 章)" % len(search_window.chapter_titles))
+    def rename_chapter_tree(self, event):
+        item = event.GetItem()
+        value = self.chapter_tree.GetItemText(item)
+        dlg = wx.TextEntryDialog(self, "重命名章节名：", "重命名", value)
+        if dlg.ShowModal() == wx.ID_OK:
+            self.chapter_tree.SetItemText(item, dlg.GetValue())
+
+            index = search_window.chapter_titles.index(value)
+            search_window.chapter_titles[index] = dlg.GetValue()
     def select_chapter(self):
         self.current_text = book_core.get_book_contents(self.current_chapter_url)
         self.set_contents_textbox()
@@ -232,34 +251,40 @@ class MainWindow(wx.Frame):
             self.chapter_content_textbox.SetValue(self.current_text[0] + "\n\n" + self.current_text[1])
         else:
             self.chapter_content_textbox.SetValue(self.current_text[1])
-        processing_window.Hide()
+        self.processing_window.Destroy()
     def auto_chapter_change(self, event):
         self.auto_chapter=self.auto_chapter_chkbox.GetValue()
         self.set_contents_textbox()
+    def copy_to_cb(self):
+        cb = wx.Clipboard()
+        data = wx.TextDataObject()
+        data.SetText((self.book_info_label.GetLabel()))
+        cb.Open()
+        cb.SetData(data)
+        cb.Flush()
 class SearchWindow(wx.Dialog):
     def __init__(self, parent):
         wx.Dialog.__init__(self, parent, -1, "搜索小说")
         self.SetSize(self.FromDIP((600, 380)))
         self.search_panel = wx.Panel(self, -1)
         self.Center()
+        self.scale_factor = self.GetDPIScaleFactor()
 
-        self.Show_Controls()
+        self.init_controls()
         self.Bind_EVT()
         self.init_search_result_listctrl()
-    def Show_Controls(self):
-        self.font=wx.Font()
-        self.font.PointSize=fontsize
-        self.font.FaceName="微软雅黑"
-        self.search_panel.SetFont(self.font)
 
-        self.search_textbox = wx.TextCtrl(self.search_panel, -1)
+        self.history_list = book_core.read_history()
+        self.search_cb.Set(self.history_list)
+    def init_controls(self):
+        self.search_cb = wx.ComboBox(self.search_panel, -1)
         self.search_book_button = wx.Button(self.search_panel, -1, "搜索", size = self.FromDIP((90, 30)))
         self.source_list = book_core.website_list
         self.source_combobox = wx.ComboBox(self.search_panel, -1, choices = self.source_list, style = wx.CB_READONLY)
         self.source_combobox.SetSelection(0)
 
         hbox = wx.BoxSizer(wx.HORIZONTAL)
-        hbox.Add(self.search_textbox, 1, wx.ALL | wx.EXPAND, 10)
+        hbox.Add(self.search_cb, 1, wx.ALL | wx.EXPAND, 10)
         hbox.Add(self.search_book_button, 0 ,wx.TOP | wx.BOTTOM, 10)
         hbox.Add(self.source_combobox, 0, wx.ALL | wx.ALIGN_CENTRE, 10)
 
@@ -274,64 +299,75 @@ class SearchWindow(wx.Dialog):
 
         self.search_panel.SetSizer(vbox)
     def Bind_EVT(self):
-        self.Bind(wx.EVT_CLOSE,self.Window_OnClose)
+        self.Bind(wx.EVT_CLOSE,self.OnClose)
         self.search_book_button.Bind(wx.EVT_BUTTON, self.search_book_EVT)
         self.search_result_listctrl.Bind(wx.EVT_LIST_ITEM_SELECTED,self.select_search_result_listctrl)
         self.source_combobox.Bind(wx.EVT_COMBOBOX,self.source_combobox_EVT)
-    def Window_OnClose(self, event):
+    def OnClose(self, event):
         self.Hide()
-    def search_book_EVT(self,event):
-        self.bookname=self.search_textbox.GetValue()
-        self.type=self.source_combobox.GetSelection()
-        if self.bookname == "":
-            main_window.show_msgbox(self,"警告","搜索内容不能为空",style=wx.ICON_WARNING)
+    def search_book_EVT(self, event):
+        self.bookname = self.search_cb.GetValue()
+        self.update_history()
+        self.type = self.source_combobox.GetSelection()
+        if not bool(self.bookname):
+            main_window.show_msgbox(self, "警告", "搜索内容不能为空", style = wx.ICON_WARNING)
             return 0
-        wx.CallAfter(processing_window.Show)
         threadpool.submit(self.search_book)
+
+        self.processing_window = ProcessingWindow(self)
+        self.processing_window.ShowWindowModal()
+    def update_history(self):
+        if not self.bookname or self.history_list.count(self.bookname) != 0:
+            return
+        self.history_list.append(self.bookname)
+        book_core.save_history(self.bookname)
+
+        self.search_cb.Set(self.history_list)
+        self.search_cb.SetValue(self.bookname)
     def search_book(self):
         self.search_result = book_core.search_book(self.bookname)
-        if book_core.isFailed:
-            main_window.show_msgbox(processing_window, "错误", "尝试从站点获取信息失败\n\n原因：%s" % book_core.error_info, style = wx.ICON_ERROR)
-            processing_window.Hide()
-            return
         wx.CallAfter(self.set_search_result_listctrl)
     def init_search_result_listctrl(self):
         self.search_result_listctrl.ClearAll()
-        self.search_result_listctrl.InsertColumn(0,"序号",width=50)
-        self.search_result_listctrl.InsertColumn(1,"书名",width=250)
-        self.search_result_listctrl.InsertColumn(2,"作者",width=200)
+        self.search_result_listctrl.InsertColumn(0, "序号", width = int(50 * self.scale_factor))
+        self.search_result_listctrl.InsertColumn(1, "书名", width = int(250 * self.scale_factor))
+        self.search_result_listctrl.InsertColumn(2, "作者", width = int(200 * self.scale_factor))
     def set_search_result_listctrl(self):
         self.init_search_result_listctrl()
+
         index = 0
         for i in self.search_result:
             self.search_result_listctrl.InsertItem(index,str(index+1))
             self.search_result_listctrl.SetItem(index,1,i)
             self.search_result_listctrl.SetItem(index,2,self.search_result[i][1])
             index += 1
+    
         self.search_result_label.SetLabel("搜索结果 (共 %d 条)" % len(self.search_result))
-        processing_window.Hide()
+        self.processing_window.Destroy()
     def select_search_result_listctrl(self,event):
-        index=self.search_result_listctrl.GetFocusedItem()
+        index = self.search_result_listctrl.GetFocusedItem()
 
-        name=self.search_result_listctrl.GetItemText(index,1)
-        url=self.search_result[name][0]
-        author=self.search_result_listctrl.GetItemText(index,2)
+        name = self.search_result_listctrl.GetItemText(index, 1)
+        url = self.search_result[name][0]
+        author = self.search_result_listctrl.GetItemText(index, 2)
 
         self.Hide()
-        processing_window.Show()
         wx.CallLater(1, self.select_book, name, url, author, self.type)
+
+        self.processing_window = ProcessingWindow(self)
+        self.processing_window.ShowWindowModal()
     def select_book(self,name,url,author,type):
-        self.current_name,self.current_url,self.current_author,self.type=name,url,author,type
+        self.current_name, self.current_url, self.current_author, self.type = name, url, author, type
         book_core.change_websites(self.type)
         main_window.SetTitle(main_window.w_title + " - " + name)
         main_window.book_address_textbox.SetValue(self.current_url)
         main_window.book_info_label.SetLabel("书名：%s         作者：%s" % (name,author))
 
-        self.intro=book_core.get_book_info(url)
-        chapter_info=book_core.get_book_chapters(url)
+        self.intro = book_core.get_book_info(url)
+        chapter_info = book_core.get_book_chapters(url)
 
-        self.chapter_titles=list(chapter_info.keys())
-        self.chapter_urls=list(chapter_info.values())
+        self.chapter_titles = list(chapter_info.keys())
+        self.chapter_urls = list(chapter_info.values())
 
         self.set_chapter_tree(name,self.chapter_titles)
         main_window.book_chapter_label.SetLabel("目录 (共 %d 章)" % len(self.chapter_titles))
@@ -341,7 +377,10 @@ class SearchWindow(wx.Dialog):
         main_window.add_shelf_button.Enable(True)
         main_window.read_mode_menuitem.Enable(True)
         main_window.auto_chapter_chkbox.Enable(False)
-        processing_window.Hide()
+
+        parse_window.has_cached = False
+
+        self.processing_window.Destroy()
     def set_chapter_tree(self,name,chapter_titles):
         main_window.chapter_tree.DeleteAllItems()
         root = main_window.chapter_tree.AddRoot(name)
@@ -353,82 +392,102 @@ class SearchWindow(wx.Dialog):
         book_core.change_websites(self.type)
         self.init_search_result_listctrl()
         self.search_result_label.SetLabel("搜索结果")
-class SetBookWindow(wx.Dialog):
+class ParseBookWindow(wx.Dialog):
     def __init__(self, parent):
         wx.Dialog.__init__(self, parent, -1, "爬取小说")
-        self.SetSize(self.FromDIP((400, 200)))
-        self.setbook_panel=wx.Panel(self, -1)
+        self.SetSize(self.FromDIP((400, 220)))
+        self.parse_panel = wx.Panel(self, -1)
         self.Center()
 
-        self.Show_Controls()
+        self.init_controls()
         self.Bind_EVT()
+
         self.file_path_textbox.SetValue(os.getcwd())
         self.isworking = False
-    def Show_Controls(self):
-        self.font = wx.Font()
-        self.font.PointSize = fontsize
-        self.font.FaceName = "微软雅黑"
-        self.setbook_panel.SetFont(self.font)
-
-        self.file_path_label = wx.StaticText(self.setbook_panel, -1, "保存目录")
-        self.file_path_textbox = wx.TextCtrl(self.setbook_panel, -1)
-        self.browse_dir_button = wx.Button(self.setbook_panel, -1, "浏览")
+        self.has_cached = False
+    def init_controls(self):
+        self.file_path_label = wx.StaticText(self.parse_panel, -1, "保存目录")
+        self.file_path_textbox = wx.TextCtrl(self.parse_panel, -1)
+        self.browse_dir_button = wx.Button(self.parse_panel, -1, "浏览")
 
         hbox1 = wx.BoxSizer(wx.HORIZONTAL)
         hbox1.Add(self.file_path_label, 0, wx.ALL | wx.ALIGN_CENTER, 10)
         hbox1.Add(self.file_path_textbox, 1, wx.ALL, 10)
         hbox1.Add(self.browse_dir_button, 0, wx.ALL, 10)
 
-        self.file_type_label = wx.StaticText(self.setbook_panel,-1, "保存格式")
-        file_type = ["*.epub","*.txt"]
-        self.file_type_combobox = wx.ComboBox(self.setbook_panel, -1, choices = file_type, style = wx.CB_READONLY)
+        self.file_type_label = wx.StaticText(self.parse_panel,-1, "保存格式\\类型")
+        file_type = ["*.epub", "*.txt", "*.html"]
+        self.file_type_combobox = wx.ComboBox(self.parse_panel, -1, choices = file_type, style = wx.CB_READONLY)
         self.file_type_combobox.SetSelection(0)
+        self.description_label = wx.StaticText(self.parse_panel, -1, "说明：epub 是目前最流行的一种电子书格式，支持章节列表显示。")
 
         hbox2 = wx.BoxSizer(wx.HORIZONTAL)
         hbox2.Add(self.file_type_label, 0, wx.LEFT | wx.RIGHT | wx.ALIGN_CENTER, 10)
         hbox2.Add(self.file_type_combobox, 0, wx.LEFT | wx.RIGHT, 10)
 
-        self.file_name_label = wx.StaticText(self.setbook_panel, -1, "文件名   ")
-        self.file_name_textbox = wx.TextCtrl(self.setbook_panel, -1)
+        self.file_name_label = wx.StaticText(self.parse_panel, -1, "文件名")
+        self.file_name_textbox = wx.TextCtrl(self.parse_panel, -1)
 
         hbox3 = wx.BoxSizer(wx.HORIZONTAL)
         hbox3.Add(self.file_name_label, 0, wx.ALL | wx.ALIGN_CENTER, 10)
         hbox3.Add(self.file_name_textbox, 2, wx.ALL, 10)
         hbox3.AddStretchSpacer(1)
 
-        self.start_get_book_button=wx.Button(self.setbook_panel, -1, "开始爬取小说", size = self.FromDIP((120, 35)))
+        self.parse_button=wx.Button(self.parse_panel, -1, "开始爬取小说", size = self.FromDIP((120, 35)))
 
         vbox = wx.BoxSizer(wx.VERTICAL)
         vbox.Add(hbox1, 0, wx.EXPAND, 0)
         vbox.Add(hbox2, 0, wx.EXPAND, 0)
+        vbox.Add(self.description_label, 0, wx.LEFT | wx.TOP, 10)
         vbox.Add(hbox3, 0, wx.EXPAND, 0)
-        vbox.Add(self.start_get_book_button, 0, wx.LEFT| wx.RIGHT | wx.ALIGN_RIGHT, 10)
+        vbox.Add(self.parse_button, 0, wx.LEFT| wx.RIGHT | wx.ALIGN_RIGHT, 10)
 
-        self.setbook_panel.SetSizer(vbox)
-    def window_onshow(self, event):
+        self.parse_panel.SetSizer(vbox)
+    def OnShow(self, event):
         self.file_name_textbox.SetValue(search_window.current_name)
-    def window_onclose(self, event):
+    def OnClose(self, event):
         self.Hide()
     def Bind_EVT(self):
-        self.Bind(wx.EVT_CLOSE, self.window_onclose)
-        self.Bind(wx.EVT_SHOW, self.window_onshow)
+        self.Bind(wx.EVT_CLOSE, self.OnClose)
+        self.Bind(wx.EVT_SHOW, self.OnShow)
 
-        self.start_get_book_button.Bind(wx.EVT_BUTTON,self.start_get_book)
-        self.browse_dir_button.Bind(wx.EVT_BUTTON,self.browser_dir)
+        self.parse_button.Bind(wx.EVT_BUTTON, self.parse_book_EVT)
+        self.browse_dir_button.Bind(wx.EVT_BUTTON, self.browser_dir)
+        self.file_type_combobox.Bind(wx.EVT_COMBOBOX, self.select_type_EVT)
     def browser_dir(self, event):
-        dlg=wx.DirDialog(self,"选择保存目录")
-        if dlg.ShowModal()==wx.ID_OK:
+        dlg = wx.DirDialog(self, "选择保存目录")
+        if dlg.ShowModal() == wx.ID_OK:
             save_path=dlg.GetPath()
             self.file_path_textbox.SetValue(save_path)
         dlg.Destroy()
-    def start_get_book(self, event):
+    def parse_book_EVT(self, event):
         self.file_name = self.file_name_textbox.GetValue()
         self.file_path = self.file_path_textbox.GetValue()
         self.file_type = self.file_type_combobox.GetValue()
         self.isworking = True
 
         self.Hide()
-        self.get_all_chapters()
+        if self.has_cached:
+            self.process_all_chapters()
+        else:
+            self.get_all_chapters()
+    def select_type_EVT(self, event):
+        item = event.GetString()
+        if item == "*.epub":
+            self.description_label.SetLabel("说明：epub 是目前最流行的一种电子书格式，支持章节列表显示。")
+        elif item == "*.txt":
+            self.description_label.SetLabel("说明：txt 是一种通用的文本格式。")
+        elif item == "*.html":
+            self.description_label.SetLabel("说明：将小说缓存到本地，稍后可用阅读模式浏览。")
+
+        if item == "*.html":
+            self.file_path_textbox.Enable(False)
+            self.browse_dir_button.Enable(False)
+            self.file_name_textbox.Enable(False)
+        else:
+            self.file_path_textbox.Enable(True)
+            self.browse_dir_button.Enable(True)
+            self.file_name_textbox.Enable(True)
     def get_all_chapters(self):
         self.auto_chapter = main_window.auto_chapter_chkbox.GetValue()
 
@@ -450,27 +509,29 @@ class SetBookWindow(wx.Dialog):
         wx.CallAfter(self.update_progress, chapter_name, index)
 
         if self.count == len(search_window.chapter_urls):
+            self.sort_list = list(self.content_dict.keys())
+            self.sort_list.sort(reverse = False)
             self.process_all_chapters()
     def update_progress(self, chapter_name, index):
-        progress = (self.count/len(search_window.chapter_urls)) * 100
+        progress = (self.count / len(search_window.chapter_urls)) * 100
         tip = "[进度]：%.2f %% 正在爬取：%s" % (progress, chapter_name)
-        main_window.status_bar.SetStatusText(tip,1)
-        main_window.status_bar.SetStatusText("正在处理线程：%d" % index,2)
+        main_window.status_bar.SetStatusText(tip, 1)
+        main_window.status_bar.SetStatusText("正在处理线程：%d" % index, 2)
     def process_all_chapters(self):
-        self.sort_list = list(self.content_dict.keys())
-        self.sort_list.sort(reverse = False)
         if self.file_type == "*.epub":
             self.filetype_epub()
-        else:
+        elif self.file_type ==  "*.txt":
             self.filetype_txt()
+        else:
+            self.filetype_html()
         wx.CallAfter(self.process_finish)
     def process_finish(self):
         main_window.show_msgbox(main_window, "提示", '小说 "%s" 爬取完成' % search_window.current_name,style=wx.ICON_INFORMATION)
         main_window.status_bar.SetStatusText(" 就绪",0)
         main_window.status_bar.SetStatusText("", 1)
         main_window.status_bar.SetStatusText("", 2)
-        self.content_dict.clear()
         self.isworking = False
+        self.has_cached = True
     def filetype_txt(self):
         path = os.path.join(self.file_path, self.file_name + ".txt")
         file = open(path, "a", encoding = "utf-8")
@@ -487,6 +548,19 @@ class SetBookWindow(wx.Dialog):
         epub.create_epub(path, search_window.current_name, search_window.current_author, search_window.chapter_titles)
 
         epub.create_chapters(self.sort_list, self.content_dict)
+    def filetype_html(self):
+        base_path = os.path.join(os.getcwd(), "book_cache", self.file_name)
+        os.makedirs(base_path)
+
+        for index in self.sort_list:
+            text = self.content_dict[index]
+
+            isFirst = True if index == 0 else False
+            isLast = True if index + 1 == len(search_window.chapter_urls) else False
+
+            html_core.process_contents(os.path.join(base_path, "%s.html" % str(int(index) + 1)), text[0], text, int(index), isFirst, isLast)
+        html_core.process_chapter(os.path.join(base_path, "contents.html"), self.file_name, search_window.chapter_titles)
+        html_core.save_css(os.path.join(base_path, "style.css"))
 class ShelfWindow(wx.Dialog):
     def __init__(self, parent):
         wx.Dialog.__init__(self, parent, -1, "书架")
@@ -494,29 +568,26 @@ class ShelfWindow(wx.Dialog):
         self.shelf_panel = wx.Panel(self, -1)
         self.Center()
 
-        self.Show_Controls()
+        self.init_controls()
         self.Bind_EVT()
         self.connect_db()
-    def Window_OnShow(self, event):
+
+        self.processing_window = ProcessingWindow(self)
+    def OnShow(self, event):
         self.connect_db()
         self.show_books()
-    def Window_OnClose(self, event):
+    def OnClose(self, event):
         self.Hide()
         self.db.close()
     def Bind_EVT(self):
-        self.Bind(wx.EVT_SHOW, self.Window_OnShow)
-        self.Bind(wx.EVT_CLOSE, self.Window_OnClose)
+        self.Bind(wx.EVT_SHOW, self.OnShow)
+        self.Bind(wx.EVT_CLOSE, self.OnClose)
 
         self.book_shelf_LC.Bind(wx.EVT_LIST_ITEM_SELECTED,self.select_shelf_lc)
         self.select_buttton.Bind(wx.EVT_BUTTON, self.select_book)
         self.remove_buttton.Bind(wx.EVT_BUTTON, self.remove_book)
         self.remove_all_button.Bind(wx.EVT_BUTTON, self.drop_table)
-    def Show_Controls(self):
-        self.font=wx.Font()
-        self.font.PointSize=fontsize
-        self.font.FaceName = "微软雅黑"
-        self.shelf_panel.SetFont(self.font)
-
+    def init_controls(self):
         self.book_shelf_LC=wx.ListCtrl(self.shelf_panel,-1,size=((700, 300)),style=wx.LC_REPORT)
 
         self.select_buttton = wx.Button(self.shelf_panel, -1, "查看选中小说", size=(120, 30))
@@ -537,7 +608,7 @@ class ShelfWindow(wx.Dialog):
 
         self.shelf_panel.SetSizer(vbox)
     def connect_db(self):
-        self.db = sqlite3.connect("book.db",check_same_thread=False)
+        self.db = connect("book.db",check_same_thread=False)
         self.cursor = self.db.cursor()
         self.cursor.execute("SELECT * FROM book_shelf")
         self.result = self.cursor.fetchall()
@@ -585,9 +656,11 @@ class ShelfWindow(wx.Dialog):
         self.select_buttton.Enable(True)
         self.remove_buttton.Enable(True)
     def select_book(self, event):
-        processing_window.Show()
         self.Hide()
         wx.CallLater(1, search_window.select_book, self.name, self.url, self.author, self.type)
+
+        search_window.processing_window = ProcessingWindow(main_window)
+        search_window.processing_window.ShowWindowModal()
     def remove_book(self, event):
         self.book_shelf_LC.DeleteItem(self.index)
         self.cursor.execute("DELETE FROM book_shelf WHERE book_name = '%s' AND source = '%s'" % (self.name,self.type))
@@ -599,11 +672,19 @@ class ReadWindow(wx.Frame):
         self.browser_panel = wx.Panel(self, -1)
         self.Center()
 
-        self.show_controls()
+        self.init_controls()
         self.Bind_EVT()
-        self.show_page()
+
         self.current_size = 20
-    def show_controls(self):
+    def load_select_window(self):
+        select_window = SelectWindow(self)
+        select_window.ShowWindowModal()
+
+        bookname = select_window.select_bookname
+
+        if bookname != "":
+            self.show_page(bookname)
+    def init_controls(self):
         self.browser = wx.html2.WebView.New(self.browser_panel, -1)
 
         hbox = wx.BoxSizer()
@@ -641,7 +722,13 @@ class ReadWindow(wx.Frame):
         self.SetStatusBar(self.Status_Bar)
     def Bind_EVT(self):
         self.browser.Bind(wx.html2.EVT_WEBVIEW_TITLE_CHANGED, self.title_changed)
+        self.browser.Bind(wx.html2.EVT_WEBVIEW_LOADED, self.page_loaded)
+
         self.Bind(wx.EVT_MENU, self.menu_evt)
+    def page_loaded(self, event):
+        title = self.browser.GetCurrentTitle()
+        if str(title).find("章节列表") == -1 and title != "":
+            self.browser.RunScript('''document.getElementById("text").style.fontSize = "%dpx";''' % self.current_size)
     def menu_evt(self, event):
         menuid = event.GetId()
         if menuid == 100:
@@ -652,10 +739,13 @@ class ReadWindow(wx.Frame):
             self.browser.RunScript('''document.getElementById("p_d").click();''')
         if menuid == 130:
             self.browser.RunScript('''document.getElementById("text").style.fontSize = "14px";''')
+            self.current_size = 14
         if menuid == 140:
             self.browser.RunScript('''document.getElementById("text").style.fontSize = "20px";''')
+            self.current_size = 20
         if menuid == 150:
             self.browser.RunScript('''document.getElementById("text").style.fontSize = "25px";''')
+            self.current_size = 25
         if menuid == 160:
             dlg = wx.NumberEntryDialog(self, "设置字体大小(单位: px):", "", "自定义字体大小", self.current_size, 14, 25)
             if dlg.ShowModal() == wx.ID_OK:
@@ -663,51 +753,11 @@ class ReadWindow(wx.Frame):
                 self.browser.RunScript('''document.getElementById("text").style.fontSize = "%dpx";''' % self.current_size)
     def title_changed(self, event):
         self.SetTitle(self.browser.GetCurrentTitle())
-    def show_page(self):
-        self.bookname = search_window.current_name
-        self.base_path = os.path.join(os.getcwd(), "book_cache", self.bookname)
+    def show_page(self, bookname):
+        self.base_path = os.path.join(os.getcwd(), "book_cache", bookname)
 
-        if not os.path.exists(self.base_path):
-            self.get_book_cache()
-            pass
-        else:
-            self.open_path = os.path.join(self.base_path, "contents.html")
-            self.browser.LoadURL("file://" + self.open_path)
-    def get_book_cache(self):
-        os.makedirs(self.base_path)
-        html_core.save_css(os.path.join(self.base_path, "style.css"))
-        self.process_chapter()
-        self.count = 0
-        self.Status_Bar.SetStatusText(" 处理中", 0)
-
-        task = [threadpool.submit(self.process_each_chapter, search_window.chapter_urls.index(i)) for i in search_window.chapter_urls]
-    def process_each_chapter(self, index):
-        chapter_name = search_window.chapter_titles[index]
-        chapter_url = search_window.chapter_urls[index]
-
-        isFirst = True if index == 0 else False
-        isLast = True if index + 1 == len(search_window.chapter_urls) else False
-
-        text = book_core.get_book_contents(chapter_url)
-        html_page = html_core.process_contents(chapter_name, text, index, isFirst, isLast)
-        self.count += 1
-        wx.CallAfter(self.update_progress, chapter_name)
-
-        file_path = os.path.join(self.base_path, "%d.html" % index)
-        with open (file_path, "w", encoding = "utf-8") as f:
-            f.write(html_page)
-
-        if self.count == len(search_window.chapter_urls):
-            self.Status_Bar.SetStatusText(" 就绪", 0)
-            self.Status_Bar.SetStatusText("", 1)
-    def update_progress(self, chapter_name):
-        progress = (self.count / len(search_window.chapter_urls)) * 100
-        self.Status_Bar.SetStatusText("[进度]：%.2f %% 正在爬取：%s" % (progress, chapter_name), 1)
-    def process_chapter(self):
-        path = os.path.join(self.base_path, "contents.html")
-        with open (path, "w", encoding = "utf-8") as f:
-            f.write(html_core.process_chapter(self.bookname, search_window.chapter_titles))
-        self.browser.LoadURL(path)
+        self.open_path = os.path.join(self.base_path, "contents.html")
+        self.browser.LoadURL("file://" + self.open_path)
 class SetWindow(wx.Dialog):
     def __init__(self, parent):
         style = wx.DEFAULT_FRAME_STYLE & (~wx.MAXIMIZE_BOX) & (~wx.MINIMIZE_BOX)  & (~wx.RESIZE_BORDER) | wx.FRAME_FLOAT_ON_PARENT
@@ -716,16 +766,11 @@ class SetWindow(wx.Dialog):
         self.set_panel = wx.Panel(self, -1)
         self.Center()
 
-        self.show_controls()
+        self.init_controls()
         self.Bind_EVT()
         book_core.read_config()
-    def show_controls(self):
-        self.font = wx.Font()
-        self.font.PointSize = fontsize
-        self.font.FaceName = "微软雅黑"
-
+    def init_controls(self):
         self.ip_box = wx.StaticBox(self.set_panel, -1, "代理 IP 设置")
-        self.ip_box.SetFont(self.font)
 
         self.disable_ip_rad = wx.RadioButton(self.ip_box, -1, "禁用代理 IP")
         self.disable_ip_rad.SetValue(True)
@@ -754,7 +799,6 @@ class SetWindow(wx.Dialog):
         sbox.Add(vbox1, 1, wx.EXPAND, 0)
 
         self.thread_box = wx.StaticBox(self.set_panel, -1, "线程池设置")
-        self.thread_box.SetFont(self.font)
         self.thread_label = wx.StaticText(self.thread_box, -1, "线程数：10")
         self.thread_slider = wx.Slider(self.thread_box, -1, 10, 1, 32, style = wx.SL_AUTOTICKS | wx.SL_MIN_MAX_LABELS)
         self.change_thread(0)
@@ -767,9 +811,7 @@ class SetWindow(wx.Dialog):
         sbox2.Add(vbox2, 0, wx.EXPAND, 0)
 
         self.ok_button = wx.Button(self.set_panel, -1, "确定", size = self.FromDIP((90,30)))
-        self.ok_button.SetFont(self.font)
         self.cancel_button = wx.Button(self.set_panel, -1, "取消",size = self.FromDIP((90,30)))
-        self.cancel_button.SetFont(self.font)
 
         hbox3 = wx.BoxSizer(wx.HORIZONTAL)
         hbox3.AddStretchSpacer(1)
@@ -782,23 +824,23 @@ class SetWindow(wx.Dialog):
         vbox.Add(hbox3, 0, wx.EXPAND, 0)
         self.set_panel.SetSizer(vbox)
     def Bind_EVT(self):
-        self.Bind(wx.EVT_SHOW, self.window_onshow)
+        self.Bind(wx.EVT_SHOW, self.OnShow)
         self.thread_slider.Bind(wx.EVT_SLIDER, self.change_thread)
 
         self.disable_ip_rad.Bind(wx.EVT_RADIOBUTTON, self.disable_ip)
         self.cust_ip_rad.Bind(wx.EVT_RADIOBUTTON, self.cust_ip)
 
         self.ok_button.Bind(wx.EVT_BUTTON, self.save_change)
-        self.cancel_button.Bind(wx.EVT_BUTTON, self.close_window)
+        self.cancel_button.Bind(wx.EVT_BUTTON, self.OnClose)
         self.test_button.Bind(wx.EVT_BUTTON, self.test_ip)
-    def close_window(self, event):
-        self.Close()
-    def window_onshow(self, event):
-        self.ip_type = book_core.ip_type
-        if self.ip_type == 0:
+    def OnClose(self, event):
+        self.Destroy()
+    def OnShow(self, event):
+        self.proxy_ip = book_core.proxy_ip
+        if not self.proxy_ip:
             self.disable_ip(0)
             self.disable_ip_rad.SetValue(True)
-        elif self.ip_type == 1:
+        else:
             self.cust_ip(0)
             self.cust_ip_rad.SetValue(True)
 
@@ -823,7 +865,7 @@ class SetWindow(wx.Dialog):
     def save_change(self, event):
         threadpool._max_workers = self.thread_value
         book_core.save_config(self.ip_type, self.ip_port_tc.GetValue(), self.thread_value)
-        self.Close()
+        self.Destroy()
     def test_ip(self, event):
         threadpool.submit(self.visit_website)
     def visit_website(self):
@@ -833,36 +875,93 @@ class SetWindow(wx.Dialog):
                 main_window.show_msgbox(self, "提示", "测试成功\n\n状态码：%d\n响应时间：%.2f 秒" % (page.status_code, page.elapsed.total_seconds()), style = wx.ICON_INFORMATION)
         except requests.RequestException as e:
             main_window.show_msgbox(self, "提示", "测试失败\n\n原因：%s" % e, style = wx.ICON_ERROR)
-class EditWindow(wx.Dialog):
-    pass
-class ProcessingWindow(wx.Frame):
+class ProcessingWindow(wx.Dialog):
     def __init__(self, parent):
-        style = wx.CAPTION
-        wx.Frame.__init__(self, parent, -1, "处理中", style = style)
+        wx.Frame.__init__(self, parent, -1, "处理中")
         self.SetSize(self.FromDIP((200, 80)))
-        self.processing_panel=wx.Panel(self, -1)
+        self.processing_panel = wx.Panel(self, -1)
+        self.EnableCloseButton(False)
         self.Center()
 
-        self.font = wx.Font()
-        self.font.PointSize = fontsize
-        self.font.FaceName = "微软雅黑"
-
         self.processing_label = wx.StaticText(self.processing_panel, -1, "正在处理中，请稍候")
-        self.processing_label.SetFont(self.font)
 
         vbox = wx.BoxSizer(wx.VERTICAL)
         vbox.Add(self.processing_label, 0, wx.ALL, 10)
 
         self.processing_panel.SetSizer(vbox)
+class StrFilterWindow(wx.Dialog):
+    def __init__(self, parent):
+        wx.Dialog.__init__(self, parent, -1, "字符串过滤")
+class SelectWindow(wx.Dialog):
+    def __init__(self, parent):
+        wx.Dialog.__init__(self, parent, -1, "选择小说")
+        self.SetSize(self.FromDIP((400, 250)))
+        self.select_panel = wx.Panel(self, -1)
+
+        self.init_controls()
+        self.Bind_EVT()
+
+        self.select_bookname = ""
+    def init_controls(self):
+        self.str_label = wx.StaticText(self.select_panel, -1, "选择要阅读的小说")
+
+        self.select_listbox = wx.ListBox(self.select_panel, -1, size = self.FromDIP((400, 120)))
+
+        self.select_button = wx.Button(self.select_panel, -1, "选择", size = self.FromDIP((80, 30)))
+        self.select_button.Enable(False)
+        self.remove_button = wx.Button(self.select_panel, -1, "删除", size = self.FromDIP((80, 30)))
+        self.remove_button.Enable(False)
+        self.help_button = wx.Button(self.select_panel, -1, "帮助", size = self.FromDIP((80, 30)))
+
+        hbox = wx.BoxSizer(wx.HORIZONTAL)
+        hbox.Add(self.help_button, 0, wx.LEFT, 10)
+        hbox.AddStretchSpacer(1)
+        hbox.Add(self.select_button, 0, wx.LEFT, 10)
+        hbox.Add(self.remove_button, 0, wx.LEFT | wx.RIGHT, 10)
+
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        vbox.Add(self.str_label, 0, wx.ALL, 10)
+        vbox.Add(self.select_listbox, 0, wx.LEFT | wx.RIGHT | wx.EXPAND, 10)
+        vbox.Add(hbox, 0, wx.TOP | wx.EXPAND, 10)
+
+        self.select_panel.SetSizer(vbox)
+    def Bind_EVT(self):
+        self.Bind(wx.EVT_SHOW, self.OnShow)
+        self.Bind(wx.EVT_CLOSE, self.OnClose)
+        self.select_listbox.Bind(wx.EVT_LISTBOX, self.select_list_EVT)
+
+        self.select_button.Bind(wx.EVT_BUTTON, self.select_button_EVT)
+        self.remove_button.Bind(wx.EVT_BUTTON, self.remove_button_EVT)
+    def OnShow(self, event):
+        self.select_listbox.Set([dirname for dirpath, dirname, filename in os.walk("book_cache") if dirname != []][0])
+    def OnClose(self, event):
+        self.select_bookname = ""
+        self.Destroy()
+    def select_list_EVT(self, event):
+        self.select_button.Enable(True)
+        self.remove_button.Enable(True)
+
+        self.select_bookname = event.GetString()
+    def select_button_EVT(self, event):
+        self.Destroy()
+    def remove_button_EVT(self, event):
+        dlg = main_window.show_msgbox(self, "删除小说缓存", '是否确实要删除 "%s"？\n\n删除后需重新缓存' % self.select_bookname, style = wx.YES_NO | wx.ICON_WARNING)
+
+        if dlg == wx.ID_YES:
+            dir_path = os.path.join(os.getcwd(), "book_cache", self.select_bookname)
+            shutil.rmtree(dir_path)
+
+            self.OnShow(0)
 if __name__ == "__main__":
     app = wx.App()
     book_core = BookCore()
     threadpool = ThreadPoolExecutor(max_workers = book_core.thread_amounts)
     html_core = HtmlCore()
+
     main_window = MainWindow(None)
     search_window = SearchWindow(main_window)
-    setbook_window = SetBookWindow(main_window)
+    parse_window = ParseBookWindow(main_window)
     shelf_window = ShelfWindow(main_window)
-    processing_window = ProcessingWindow(None)
+
     main_window.Show()
     app.MainLoop()
