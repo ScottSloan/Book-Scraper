@@ -405,7 +405,7 @@ class SearchWindow(wx.Dialog):
 class ParseBookWindow(wx.Dialog):
     def __init__(self, parent):
         wx.Dialog.__init__(self, parent, -1, "爬取小说")
-        self.SetSize(self.FromDIP((400, 250)))
+        self.SetSize(self.FromDIP((400, 230)))
         self.parent = parent
         self.parse_panel = wx.Panel(self, -1)
         self.Center()
