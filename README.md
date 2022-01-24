@@ -1,7 +1,7 @@
 # 小说爬取工具 - Book Scraper
 使用 Python 编写的一款轻量级的小说爬取工具  
-Latest Version 1.33  
-更新日期：2022-1-20
+Latest Version 1.34  
+更新日期：2022-1-24
 
 ## 功能
 * 支持 `GUI` 图形界面 (wxPython)  
