@@ -7,9 +7,10 @@ class BookCore:
     def __init__(self):
         self.set_dpi()
         self.read_config()
+        self.read_strs()
         self.change_websites(0)
         self.get_websites_list()
-    def get_html_page(self, url, encoding):
+    def get_html_page(self, url, encoding) -> str:
         for i in range(0, 3):
             try:
                 header = {"User-Agent":"Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36 Edg/96.0.1054.62"}
@@ -18,59 +19,72 @@ class BookCore:
             except RequestException as e:
                 if i == 3:
                     self.error_info = e
-                    print(e)
                     return "Error"
                 continue
         req.encoding = encoding
         return req.text
-    def get_book_chapters(self, url):
+    def get_book_chapters(self, url) -> dict:
         html = self.get_html_page(url, self.get_encoding(1))
         selector = Selector(html)
 
-        chapter_titles = selector.css(self.result[10]).extract()
-        chapter_urls = selector.css(self.result[11]).extract()
+        chapter_titles = selector.css(self.result[11]).extract()
+        chapter_urls = selector.css(self.result[12]).extract()
         
         chapter_titles = self.process_chapter_titles(chapter_titles)
         chapter_urls = self.process_chapter_urls(chapter_urls)
 
         chapter_info = dict(zip(chapter_titles, chapter_urls))
         return chapter_info
-    def get_book_contents(self, url):
+    def get_book_contents(self, url) -> list:
         html = self.get_html_page(url, self.get_encoding(2))
         selector = Selector(html)
 
-        title = selector.css(self.result[12]).extract_first()
-        contents = selector.css(self.result[13]).extract()
+        title = selector.css(self.result[13]).extract_first()
+        contents = selector.css(self.result[14]).extract()
         contents = [i for i in contents if i != "\r\n\t\t"]
 
-        return [title,"\n".join(contents)]
-    def get_book_info(self, url):
+        contents_p = "\n".join(contents)
+
+        for i in self.str_list:
+            contents_p = contents_p.replace(i, "")
+
+        return [title, contents_p]
+    def get_book_info(self, url) -> str:
         html = self.get_html_page(url, self.get_encoding(1))
         selector = Selector(html)
 
-        info=selector.css(self.result[8]).extract()
-        intro=selector.css(self.result[9]).extract()
+        info=selector.css(self.result[9]).extract()
+        intro=selector.css(self.result[10]).extract()
 
         return self.process_info(info + intro)
-    def process_chapter_urls(self, chapter_urls):
+    def get_book_cover(self, url) -> bytes:
+        html = self.get_html_page(url, self.get_encoding(1))
+        selector = Selector(html)
+
+        img_url = selector.css("div.book > div.info > div.cover > img::attr(src)").extract_first()
+
+        req = get(img_url)
+        with open("temp.jpg", "wb") as f:
+            f.write(req.content)
+    def process_chapter_urls(self, chapter_urls) -> list:
         if str(chapter_urls[0]).startswith("https") or str(chapter_urls[0]).startswith("http"):
             return chapter_urls
         else:
             return ["http://" + self.result[2] + i for i in chapter_urls if i != "javascript:dd_show()"]
-    def process_info(self, info):
+    def process_info(self, info) -> str:
         processed = info
         text = ["加入书架", ",", "直达底部", "展开全部>>"] 
         for i in text:
             if i in processed:
                 processed.remove(i)
         return "\n".join(processed)
-    def process_chapter_titles(self, chapter_titles):
-        remove_str='<<---展开全部章节--->>'
-        temp=list(chapter_titles)
-        if temp.count(remove_str)!=0:
+    def process_chapter_titles(self, chapter_titles) -> list:
+        remove_str = '<<---展开全部章节--->>'
+        temp = list(chapter_titles)
+        if temp.count(remove_str) != 0:
             temp.remove(remove_str)
         return temp
-    def search_book(self, bookname):
+    def search_book(self, bookname) -> dict:
         encoding = self.get_encoding(0)
         search_url = self.result[4] + quote (bookname, encoding=encoding)
 
@@ -85,12 +99,12 @@ class BookCore:
         result_authors = self.process_authors(result_authors)
 
         return dict(zip(result_names,list(zip(result_urls,result_authors))))
-    def process_urls(self, result_urls):
+    def process_urls(self, result_urls) -> list:
         if not bool(len(result_urls)) or str(result_urls[0]).startswith("https") or str(result_urls[0]).startswith("http"):
             return result_urls
         else:
             return ["https://" + self.result[2] + i for i in result_urls]
-    def process_authors(self, result_authors):
+    def process_authors(self, result_authors) -> list:
         if not bool(len(result_authors)) or not str(result_authors[0]).startswith("作者"):
             return result_authors
         return [i[3:] for i in result_authors]
@@ -101,7 +115,7 @@ class BookCore:
         self.cursor = self.db.cursor()
         self.cursor.execute('''SELECT %s FROM book_websites WHERE id=%d''' % (args, type))
         return self.cursor.fetchone()
-    def get_encoding(self, index):
+    def get_encoding(self, index) -> str:
         return self.result[3].split(" | ")[index]
     def get_websites_list(self):
         self.cursor.execute('''SELECT website,baseurl FROM book_websites''')
@@ -109,14 +123,14 @@ class BookCore:
         self.website_list = []
         for index,value in enumerate(result):
             self.website_list.append("%d.%s (%s)" % (index + 1, value[0], value[1]))
-    def get_ip(self):
+    def get_ip(self) -> dict:
         if not self.proxy_ip:
             return {}
         else:
             return {"https":self.ip_addres}
     def read_config(self):
         self.config = ConfigParser()
-        self.config.read("config.conf", encoding = "utf-8")
+        self.config.read("config.ini", encoding = "utf-8")
 
         self.proxy_ip = bool(int(self.config.get("proxy_ip","proxy_ip")))
         self.ip_addres = self.config.get("proxy_ip","ip_address")
@@ -125,20 +139,30 @@ class BookCore:
         self.config.set("proxy_ip", "proxy_ip", str(ip_type))
         self.config.set("proxy_ip", "ip_address", ip_address)
         self.config.set("thread_pool", "thread_amounts", str(thread_amounts))
-        with open("config.conf", "w", encoding = "utf-8") as f:
-            self.config.write(f)
+        self.save_conf()
         self.read_config()
     def set_dpi(self):
         from platform import platform
         if platform().startswith("Windows-10"):
             from ctypes import windll
             windll.shcore.SetProcessDpiAwareness(2)
-    def read_history(self):
-        return self.config.options("history")
-    def save_history(self, item):
-        self.config.set("history", "%s" % item, "")
-        with open("config.conf", "w", encoding = "utf-8") as f:
-            self.config.write(f)
+    def read_conf(self, section) -> list:
+        return self.config.options(section)
+    def read_strs(self):
+        self.str_list = self.config.options("string")
+    def add_conf(self, section, option):
+        self.config.set(section, "%s" % option, "")
+        self.save_conf()
+    def remove_conf(self, section, option):
+        self.config.remove_option(section, option)
+        self.save_conf()
+    def save_conf(self):
+        with open("config.ini", "w", encoding = "utf-8") as f:
+            self.config.write(f)    
+    def clear_history(self):
+        self.config.remove_section("history")
+        self.config.add_section("history")
+        self.save_conf()
 class HtmlCore:
     def save_css(self, path):
         css = '.page {background-color: #E9FAFF; font-family: 微软雅黑; }\n.list {overflow: hidden; margin: 0 auto 10px;}\n.list dt {font-size: 18px; line-height: 36px; text-align: center; background: #C3DFEA; overflow: hidden;}\n.list dd {zoom: 1; padding: 0 10px; border-bottom: 1px dashed #CCC; float: left; width: 250px;}\n.list dd a {font-size: 16px; line-height: 36px; white-space: nowrap; color: #2a779d;}\n.list dd a:link {text-decoration: none;}\n.content h1 {font-size: 24px ; font-weight: 400; text-align: center ; color: #CC3300 ; line-height: 40px ;margin: 20px; border-bottom: 1px dashed #CCC;}\n.content p {font-size: 20px ;border-bottom: 1px dashed #CCC; margin: 20px;}\n.pagedown {padding: 0; background: #d4eaf2; height: 40px ; line-height: 40px ; margin-bottom: 10px ;text-align: center;}\n.pagedown a {font-size: 16px; padding: 10px ; line-height: 30px;}\n.pagedown a:link {text-decoration: none;}\n.pagedown .p_contents {color: #2a779d; background-size: 90px;}\n.pagedown .p_up {color: #2a779d; background-size: 90px;}\n.pagedown .p_down {color: #2a779d; background-size: 90px;}'
@@ -198,7 +222,7 @@ class EpubCore:
         for index in sort_list:
             text = content_dict[index]
             self.save_each_chapter(text[0], text[1], index + 1)
-    def create_navpoint(self, index, title):
+    def create_navpoint(self, index, title) -> str:
         navpoint = '''    <navPoint id="chapter%d" playOrder="%d">\n      <navLabel>\n        <text>%s</text>\n      </navLabel>\n      <content src="Text/chapter%d.html"/>\n    </navPoint>''' % (index, index, title, index)
         return navpoint
     def save_mimetype(self):
